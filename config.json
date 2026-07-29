@@ -1,0 +1,8 @@
+{
+    "autocomplete": true,
+    "autocomplete_min_chars": 2,
+    "auto_close_pairs": true,
+    "font_size": 13,
+    "line_wrap": false,
+    "tab_size": 2
+}
