@@ -11,7 +11,7 @@ from aqt.qt import QTextCursor, QWidget, pyqtSignal
 from aqt.theme import theme_manager
 from aqt.webview import AnkiWebView, AnkiWebViewKind
 
-from .core import completion_items
+from .core import anki_completion_items
 
 
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -125,15 +125,12 @@ class TemplateCodeEditor(AnkiWebView):
     def _editor_body(self) -> str:
         options = {
             "aceBasePath": self._ace_base_path(),
-            "anki": completion_items("anki", self._field_names),
+            "anki": anki_completion_items(self._field_names),
             "autocomplete": self.config["autocomplete"],
             "autocompleteMinChars": self.config["autocomplete_min_chars"],
             "autoClosePairs": self.config["auto_close_pairs"],
-            "css": completion_items("css", self._field_names),
             "fields": self._field_names,
             "fontSize": self.config["font_size"],
-            "html": completion_items("html", self._field_names),
-            "javascript": completion_items("javascript", self._field_names),
             "mode": self._mode_provider(),
             "tabSize": self.config["tab_size"],
             "theme": self._theme_name(),
@@ -186,77 +183,43 @@ html, body, #editor {{
         return lines.join("\\n");
     }}
 
-    function activeLanguage(session, pos) {{
-        if (session.$mode.$id === "ace/mode/css") return "css";
-        const before = textBeforeCursor(session, pos).toLowerCase();
-        const scriptOpen = before.lastIndexOf("<script");
-        const scriptClose = before.lastIndexOf("</script");
-        if (scriptOpen > scriptClose) return "javascript";
-        const styleOpen = before.lastIndexOf("<style");
-        const styleClose = before.lastIndexOf("</style");
-        if (styleOpen > styleClose) return "css";
-        return "html";
-    }}
-
-    function completionContext(session, pos) {{
-        const before = textBeforeCursor(session, pos);
-        if (before.lastIndexOf("{{{{") > before.lastIndexOf("}}}}")) return "anki";
-        return activeLanguage(session, pos);
-    }}
-
     const templateCompleter = {{
         identifierRegexps: [/[a-zA-Z_0-9$\\-]/],
         getCompletions: function (_editor, session, pos, prefix, callback) {{
-            const context = completionContext(session, pos);
-            let values = options[context] || [];
-            if (context === "anki") {{
-                const before = textBeforeCursor(session, pos);
-                const tail = before.slice(before.lastIndexOf("{{{{") + 2);
-                const modifier = tail.match(/^(?:[#/^]|(?:cloze|hint|type):)/i);
-                const typed = modifier ? tail.slice(modifier[0].length) : tail;
-                const candidates = modifier ? options.fields : values;
-                const matches = candidates
-                    .filter(function (value) {{
-                        return value.startsWith(typed);
-                    }})
-                    .map(function (value) {{
-                        // Ace replaces only its identifier prefix. Returning
-                        // the remaining field-name fragment also supports
-                        // names containing spaces (for example "My Field").
-                        const insertion = value.slice(
-                            Math.max(0, typed.length - prefix.length)
-                        );
-                        return {{
-                            caption: insertion,
-                            value: insertion,
-                            meta: "anki: " + value,
-                            score: 1100
-                        }};
-                    }});
-                callback(null, matches);
+            const before = textBeforeCursor(session, pos);
+            if (before.lastIndexOf("{{{{") <= before.lastIndexOf("}}}}")) {{
+                callback(null, []);
                 return;
             }}
-            callback(null, values
+
+            const tail = before.slice(before.lastIndexOf("{{{{") + 2);
+            const modifier = tail.match(/^(?:[#/^]|(?:cloze|hint|type):)/i);
+            const typed = modifier ? tail.slice(modifier[0].length) : tail;
+            const candidates = modifier ? options.fields : options.anki;
+            const matches = candidates
                 .filter(function (value) {{
-                    return value.startsWith(prefix);
+                    return value.startsWith(typed);
                 }})
                 .map(function (value) {{
+                    // Ace replaces only its identifier prefix. Returning
+                    // the remaining field-name fragment also supports
+                    // names containing spaces (for example "My Field").
+                    const insertion = value.slice(
+                        Math.max(0, typed.length - prefix.length)
+                    );
                     return {{
-                        caption: value,
-                        value: value,
-                        meta: context,
-                        score: 1000
+                        caption: insertion,
+                        value: insertion,
+                        meta: "anki: " + value,
+                        score: 1100
                     }};
-                }}));
+                }});
+            callback(null, matches);
         }},
         id: "ankiTemplateCompleter"
     }};
 
-    editor.completers = [
-        templateCompleter,
-        languageTools.keyWordCompleter,
-        languageTools.snippetCompleter
-    ];
+    languageTools.addCompleter(templateCompleter);
     editor.setOptions({{
         behavioursEnabled: options.autoClosePairs,
         displayIndentGuides: true,
