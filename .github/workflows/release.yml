@@ -1,0 +1,40 @@
+name: Publish Anki add-on
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the released version
+        uses: actions/checkout@v4
+
+      - name: Build add-on package
+        id: package
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          REPOSITORY_NAME: ${{ github.event.repository.name }}
+        run: |
+          artifact="${REPOSITORY_NAME}-${RELEASE_TAG}.ankiaddon"
+          zip -9 -X -r "$artifact" \
+            __init__.py \
+            editor.py \
+            manifest.json \
+            vendor
+          echo "artifact=$artifact" >> "$GITHUB_OUTPUT"
+
+      - name: Upload package to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: >-
+          gh release upload "$RELEASE_TAG"
+          "${{ steps.package.outputs.artifact }}"
+          --clob
