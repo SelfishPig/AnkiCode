@@ -12,13 +12,7 @@ from .editor import TemplateCodeEditor
 
 
 if mw is not None:
-    mw.addonManager.setWebExports(__name__, r"vendor/.*\.js")
-
-
-def _config() -> dict[str, Any] | None:
-    if mw is None:
-        return None
-    return mw.addonManager.getConfig(__name__)
+    mw.addonManager.setWebExports(__name__, r"vendor/monaco/.*")
 
 
 def _install_editor(dialog: Any) -> None:
@@ -31,11 +25,10 @@ def _install_editor(dialog: Any) -> None:
         if parent is None or layout is None:
             return
 
-        fields = [field.get("name", "") for field in dialog.model.get("flds", [])]
         mode_provider = lambda: (
             "css" if getattr(dialog, "current_editor_index", 0) == 2 else "html"
         )
-        editor = TemplateCodeEditor(parent, mode_provider, fields, _config())
+        editor = TemplateCodeEditor(parent, mode_provider)
         editor.setObjectName(old_editor.objectName())
         editor.setSizePolicy(old_editor.sizePolicy())
         editor.setMinimumSize(old_editor.minimumSize())

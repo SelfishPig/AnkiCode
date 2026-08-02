@@ -1,50 +1,15 @@
-"""Ace-based code editor used in Anki's card-template dialog."""
+"""Monaco-based code editor used in Anki's card-template dialog."""
 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from typing import Any
 
 from aqt import mw
 from aqt.qt import QTextCursor, QWidget, pyqtSignal
 from aqt.theme import theme_manager
 from aqt.webview import AnkiWebView, AnkiWebViewKind
-
-from .core import anki_completion_items
-
-
-DEFAULT_CONFIG: dict[str, Any] = {
-    "autocomplete": True,
-    "autocomplete_min_chars": 2,
-    "auto_close_pairs": True,
-    "font_size": 13,
-    "line_wrap": False,
-    "tab_size": 2,
-}
-
-
-def normalized_config(raw: dict[str, Any] | None) -> dict[str, Any]:
-    config = DEFAULT_CONFIG.copy()
-    if isinstance(raw, dict):
-        config.update(raw)
-
-    def bounded_int(name: str, minimum: int, maximum: int) -> int:
-        try:
-            value = int(config[name])
-        except (TypeError, ValueError):
-            value = int(DEFAULT_CONFIG[name])
-        return max(minimum, min(maximum, value))
-
-    config["font_size"] = bounded_int("font_size", 8, 32)
-    config["tab_size"] = bounded_int("tab_size", 1, 8)
-    config["autocomplete_min_chars"] = bounded_int(
-        "autocomplete_min_chars", 1, 8
-    )
-    config["autocomplete"] = bool(config["autocomplete"])
-    config["auto_close_pairs"] = bool(config["auto_close_pairs"])
-    config["line_wrap"] = bool(config["line_wrap"])
-    return config
 
 
 class _TemplateCursor:
@@ -66,7 +31,7 @@ class _TemplateCursor:
 
 
 class TemplateCodeEditor(AnkiWebView):
-    """An Ace editor with the QTextEdit API required by Anki's Cards dialog."""
+    """A Monaco editor with the QTextEdit API required by Anki's Cards dialog."""
 
     textChanged = pyqtSignal()
 
@@ -74,13 +39,9 @@ class TemplateCodeEditor(AnkiWebView):
         self,
         parent: QWidget,
         mode_provider: Callable[[], str],
-        field_names: Iterable[str],
-        config: dict[str, Any] | None,
     ) -> None:
         super().__init__(parent, kind=AnkiWebViewKind.CARD_LAYOUT)
         self._mode_provider = mode_provider
-        self._field_names = tuple(name for name in field_names if name)
-        self.config = normalized_config(config)
         self._text = ""
         self._cursor_offset = 0
         self._ready = False
@@ -96,8 +57,8 @@ class TemplateCodeEditor(AnkiWebView):
         )
 
     def _on_load_finished(self) -> None:
-        # AnkiWebView normally maps Escape to closing its parent dialog. Ace
-        # uses Escape to dismiss live completion, so leave the key with Ace.
+        # AnkiWebView normally maps Escape to closing its parent dialog. Monaco
+        # uses Escape to dismiss suggestions, so leave the key with Monaco.
         pass
 
     @staticmethod
@@ -107,34 +68,17 @@ class TemplateCodeEditor(AnkiWebView):
 
     @classmethod
     def _asset_paths(cls) -> list[str]:
-        root = f"/_addons/{cls._addon_package()}/vendor"
-        return [
-            f"{root}/ace.js",
-            f"{root}/ext-language_tools.js",
-            f"{root}/mode-html.js",
-            f"{root}/mode-css.js",
-            f"{root}/mode-javascript.js",
-            f"{root}/theme-github_dark.js",
-            f"{root}/theme-github_light_default.js",
-        ]
+        return [f"{cls._monaco_base_path()}/loader.js"]
 
     @classmethod
-    def _ace_base_path(cls) -> str:
-        return f"/_addons/{cls._addon_package()}/vendor"
+    def _monaco_base_path(cls) -> str:
+        return f"/_addons/{cls._addon_package()}/vendor/monaco/vs"
 
     def _editor_body(self) -> str:
         options = {
-            "aceBasePath": self._ace_base_path(),
-            "anki": anki_completion_items(self._field_names),
-            "autocomplete": self.config["autocomplete"],
-            "autocompleteMinChars": self.config["autocomplete_min_chars"],
-            "autoClosePairs": self.config["auto_close_pairs"],
-            "fields": self._field_names,
-            "fontSize": self.config["font_size"],
+            "monacoBasePath": self._monaco_base_path(),
             "mode": self._mode_provider(),
-            "tabSize": self.config["tab_size"],
             "theme": self._theme_name(),
-            "wrap": self.config["line_wrap"],
         }
         serialized = json.dumps(options).replace("</", "<\\/")
         return f"""
@@ -146,9 +90,6 @@ html, body, #editor {{
     padding: 0;
     width: 100%;
 }}
-#editor {{
-    font-variant-ligatures: none;
-}}
 </style>
 <div id="editor"></div>
 <script>
@@ -156,152 +97,364 @@ html, body, #editor {{
     "use strict";
 
     const options = {serialized};
-    ace.config.set("basePath", options.aceBasePath);
+    require.config({{ paths: {{ vs: options.monacoBasePath }} }});
+    require(["vs/editor/editor.main"], function () {{
+        let settingFromPython = false;
+        let cursorTimer = null;
 
-    const editor = ace.edit("editor");
-    const languageTools = ace.require("ace/ext/language_tools");
-    const Range = ace.require("ace/range").Range;
-    let settingFromPython = false;
-    let cursorTimer = null;
-
-    function sendBridge(message) {{
-        if (typeof pycmd === "function") {{
-            pycmd(JSON.stringify(message));
-        }} else {{
-            window.setTimeout(function () {{ sendBridge(message); }}, 10);
+        function sendBridge(message) {{
+            if (typeof pycmd === "function") {{
+                pycmd(JSON.stringify(message));
+            }} else {{
+                window.setTimeout(function () {{ sendBridge(message); }}, 10);
+            }}
         }}
-    }}
 
-    function modeName(mode) {{
-        return mode === "css" ? "ace/mode/css" : "ace/mode/html";
-    }}
+        function modeName(mode) {{
+            return mode === "css" ? "css" : "html";
+        }}
 
-    function textBeforeCursor(session, pos) {{
-        const lines = session.getLines(0, pos.row);
-        if (!lines.length) return "";
-        lines[lines.length - 1] = lines[lines.length - 1].slice(0, pos.column);
-        return lines.join("\\n");
-    }}
+        const editor = monaco.editor.create(
+            document.getElementById("editor"),
+            {{ theme: options.theme }}
+        );
+        const model = editor.getModel();
+        monaco.editor.setModelLanguage(model, modeName(options.mode));
+        const javascriptModels = [];
+        let diagnosticsTimer = null;
+        let diagnosticsVersion = 0;
 
-    const templateCompleter = {{
-        identifierRegexps: [/[a-zA-Z_0-9$\\-]/],
-        getCompletions: function (_editor, session, pos, prefix, callback) {{
-            const before = textBeforeCursor(session, pos);
-            if (before.lastIndexOf("{{{{") <= before.lastIndexOf("}}}}")) {{
-                callback(null, []);
+        function scriptBlocks(model) {{
+            const text = model.getValue();
+            const lowered = text.toLocaleLowerCase();
+            const blocks = [];
+            let searchFrom = 0;
+            while (searchFrom < text.length) {{
+                const openingTag = lowered.indexOf("<script", searchFrom);
+                if (openingTag < 0) break;
+                const tagEnd = text.indexOf(">", openingTag);
+                if (tagEnd < 0) break;
+                const contentStart = tagEnd + 1;
+                const closingTag = lowered.indexOf("</script", contentStart);
+                const contentEnd = closingTag < 0 ? text.length : closingTag;
+                blocks.push({{
+                    content: text.slice(contentStart, contentEnd),
+                    contentStart: contentStart,
+                    contentEnd: contentEnd
+                }});
+                if (closingTag < 0) break;
+                const closingEnd = text.indexOf(">", closingTag);
+                searchFrom = closingEnd < 0 ? text.length : closingEnd + 1;
+            }}
+            return blocks;
+        }}
+
+        function scriptContext(model, position) {{
+            const cursor = model.getOffsetAt(position);
+            const blocks = scriptBlocks(model);
+            for (let index = 0; index < blocks.length; index += 1) {{
+                const block = blocks[index];
+                if (cursor >= block.contentStart && cursor <= block.contentEnd) {{
+                    return Object.assign({{
+                        cursor: cursor - block.contentStart,
+                        index: index
+                    }}, block);
+                }}
+            }}
+            return null;
+        }}
+
+        function javascriptModel(index, content) {{
+            if (!javascriptModels[index]) {{
+                javascriptModels[index] = monaco.editor.createModel(
+                    content,
+                    "javascript",
+                    monaco.Uri.parse(
+                        "inmemory://anki-template/script-" + index + ".js"
+                    )
+                );
+            }} else if (javascriptModels[index].getValue() !== content) {{
+                javascriptModels[index].setValue(content);
+            }}
+            return javascriptModels[index];
+        }}
+
+        function completionKind(kind) {{
+            const kinds = monaco.languages.CompletionItemKind;
+            if (kind === "method") return kinds.Method;
+            if (kind === "function") return kinds.Function;
+            if (kind === "property" || kind === "getter" || kind === "setter") {{
+                return kinds.Property;
+            }}
+            if (kind === "class") return kinds.Class;
+            if (kind === "interface" || kind === "type") return kinds.Interface;
+            if (kind === "module") return kinds.Module;
+            if (kind === "keyword") return kinds.Keyword;
+            if (kind === "const") return kinds.Constant;
+            return kinds.Variable;
+        }}
+
+        const javascriptCompletionProvider =
+            monaco.languages.registerCompletionItemProvider("html", {{
+                triggerCharacters: [".", "'", String.fromCharCode(34)],
+                provideCompletionItems: async function (model, position) {{
+                    const context = scriptContext(model, position);
+                    if (!context) return {{ suggestions: [] }};
+
+                    const scriptModel = javascriptModel(
+                        context.index,
+                        context.content
+                    );
+
+                    try {{
+                        const getWorker =
+                            await monaco.languages.typescript.getJavaScriptWorker();
+                        const worker = await getWorker(scriptModel.uri);
+                        const info = await worker.getCompletionsAtPosition(
+                            scriptModel.uri.toString(),
+                            context.cursor
+                        );
+                        if (!info) return {{ suggestions: [] }};
+
+                        const word = model.getWordUntilPosition(position);
+                        const defaultRange = new monaco.Range(
+                            position.lineNumber,
+                            word.startColumn,
+                            position.lineNumber,
+                            word.endColumn
+                        );
+                        return {{
+                            suggestions: info.entries.map(function (entry) {{
+                                let range = defaultRange;
+                                const span = entry.replacementSpan ||
+                                    info.optionalReplacementSpan;
+                                if (span) {{
+                                    const start = model.getPositionAt(
+                                        context.contentStart + span.start
+                                    );
+                                    const end = model.getPositionAt(
+                                        context.contentStart + span.start + span.length
+                                    );
+                                    if (start.lineNumber === end.lineNumber) {{
+                                        range = new monaco.Range(
+                                            start.lineNumber,
+                                            start.column,
+                                            end.lineNumber,
+                                            end.column
+                                        );
+                                    }}
+                                }}
+                                const suggestion = {{
+                                    filterText: entry.filterText,
+                                    insertText: entry.insertText || entry.name,
+                                    kind: completionKind(entry.kind),
+                                    label: entry.name,
+                                    range: range,
+                                    sortText: entry.sortText
+                                }};
+                                if (entry.isSnippet) {{
+                                    suggestion.insertTextRules =
+                                        monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet;
+                                }}
+                                return suggestion;
+                            }})
+                        }};
+                    }} catch (_error) {{
+                        return {{ suggestions: [] }};
+                    }}
+                }}
+            }});
+
+        function diagnosticMessage(message) {{
+            if (typeof message === "string") return message;
+            const parts = [message.messageText];
+            (message.next || []).forEach(function (next) {{
+                parts.push(diagnosticMessage(next));
+            }});
+            return parts.join("\\n");
+        }}
+
+        async function validateJavascript(version) {{
+            if (model.getLanguageId() !== "html") {{
+                monaco.editor.setModelMarkers(model, "javascript", []);
                 return;
             }}
 
-            const tail = before.slice(before.lastIndexOf("{{{{") + 2);
-            const modifier = tail.match(/^(?:[#/^]|(?:cloze|hint|type):)/i);
-            const typed = modifier ? tail.slice(modifier[0].length) : tail;
-            const candidates = modifier ? options.fields : options.anki;
-            const matches = candidates
-                .filter(function (value) {{
-                    return value.startsWith(typed);
-                }})
-                .map(function (value) {{
-                    // Ace replaces only its identifier prefix. Returning
-                    // the remaining field-name fragment also supports
-                    // names containing spaces (for example "My Field").
-                    const insertion = value.slice(
-                        Math.max(0, typed.length - prefix.length)
+            const blocks = scriptBlocks(model);
+            while (javascriptModels.length > blocks.length) {{
+                javascriptModels.pop().dispose();
+            }}
+            if (!blocks.length) {{
+                monaco.editor.setModelMarkers(model, "javascript", []);
+                return;
+            }}
+
+            try {{
+                const getWorker =
+                    await monaco.languages.typescript.getJavaScriptWorker();
+                const markers = [];
+                for (let index = 0; index < blocks.length; index += 1) {{
+                    const block = blocks[index];
+                    const scriptModel = javascriptModel(index, block.content);
+                    const worker = await getWorker(scriptModel.uri);
+                    const diagnostics = await worker.getSyntacticDiagnostics(
+                        scriptModel.uri.toString()
                     );
-                    return {{
-                        caption: insertion,
-                        value: insertion,
-                        meta: "anki: " + value,
-                        score: 1100
-                    }};
-                }});
-            callback(null, matches);
-        }},
-        id: "ankiTemplateCompleter"
-    }};
+                    diagnostics.forEach(function (diagnostic) {{
+                        const startOffset = block.contentStart +
+                            (diagnostic.start || 0);
+                        const endOffset = startOffset + (diagnostic.length || 1);
+                        const start = model.getPositionAt(startOffset);
+                        const end = model.getPositionAt(endOffset);
+                        markers.push({{
+                            code: String(diagnostic.code),
+                            endColumn: end.column,
+                            endLineNumber: end.lineNumber,
+                            message: diagnosticMessage(diagnostic.messageText),
+                            severity: monaco.MarkerSeverity.Error,
+                            source: "JavaScript",
+                            startColumn: start.column,
+                            startLineNumber: start.lineNumber
+                        }});
+                    }});
+                }}
+                if (version === diagnosticsVersion) {{
+                    monaco.editor.setModelMarkers(model, "javascript", markers);
+                }}
+            }} catch (_error) {{
+                if (version === diagnosticsVersion) {{
+                    monaco.editor.setModelMarkers(model, "javascript", []);
+                }}
+            }}
+        }}
 
-    languageTools.addCompleter(templateCompleter);
-    editor.setOptions({{
-        behavioursEnabled: options.autoClosePairs,
-        displayIndentGuides: true,
-        enableBasicAutocompletion: options.autocomplete,
-        enableLiveAutocompletion: options.autocomplete,
-        enableSnippets: false,
-        fontSize: options.fontSize + "pt",
-        highlightActiveLine: true,
-        highlightSelectedWord: true,
-        liveAutocompletionThreshold: options.autocompleteMinChars,
-        mode: modeName(options.mode),
-        navigateWithinSoftTabs: true,
-        showFoldWidgets: true,
-        showGutter: true,
-        tabSize: options.tabSize,
-        theme: options.theme,
-        useSoftTabs: true,
-        wrap: options.wrap
-    }});
-    editor.session.setUseWorker(false);
+        function scheduleDiagnostics() {{
+            if (diagnosticsTimer !== null) window.clearTimeout(diagnosticsTimer);
+            const version = ++diagnosticsVersion;
+            diagnosticsTimer = window.setTimeout(function () {{
+                diagnosticsTimer = null;
+                validateJavascript(version);
+            }}, 250);
+        }}
 
-    editor.session.on("change", function () {{
-        if (settingFromPython) return;
-        const pos = editor.getCursorPosition();
-        sendBridge({{
-            event: "change",
-            text: editor.getValue(),
-            cursor: editor.session.doc.positionToIndex(pos, 0)
-        }});
-    }});
+        const voidElements = new Set([
+            "area", "base", "br", "col", "embed", "hr", "img", "input",
+            "link", "meta", "param", "source", "track", "wbr"
+        ]);
 
-    editor.selection.on("changeCursor", function () {{
-        if (settingFromPython) return;
-        if (cursorTimer !== null) window.clearTimeout(cursorTimer);
-        cursorTimer = window.setTimeout(function () {{
-            cursorTimer = null;
-            const pos = editor.getCursorPosition();
+        function closeHtmlTag(change) {{
+            const cursorOffset = change.rangeOffset + 1;
+            window.setTimeout(function () {{
+                if (model.getLanguageId() !== "html") return;
+                const position = editor.getPosition();
+                if (!position || model.getOffsetAt(position) !== cursorOffset) return;
+
+                const text = model.getValue();
+                if (text.charAt(cursorOffset - 1) !== ">") return;
+                const tagStart = text.lastIndexOf("<", cursorOffset - 1);
+                if (tagStart < 0) return;
+                const openingTag = text.slice(tagStart, cursorOffset);
+                if (openingTag.startsWith("</") || openingTag.endsWith("/>")) return;
+
+                const match = openingTag.match(
+                    /^<([A-Za-z][\\w:-]*)(?:\\s+(?:[^"'<>]|"[^"]*"|'[^']*')*)?>$/
+                );
+                if (!match) return;
+                const tagName = match[1];
+                if (voidElements.has(tagName.toLocaleLowerCase())) return;
+                const closingTag = "</" + tagName + ">";
+                if (text.slice(cursorOffset).toLocaleLowerCase().startsWith(
+                    closingTag.toLocaleLowerCase()
+                )) return;
+
+                editor.executeEdits("close-html-tag", [{{
+                    range: new monaco.Range(
+                        position.lineNumber,
+                        position.column,
+                        position.lineNumber,
+                        position.column
+                    ),
+                    text: closingTag
+                }}]);
+                editor.setPosition(position);
+            }}, 0);
+        }}
+
+        model.onDidChangeContent(function (event) {{
+            if (settingFromPython) return;
+            scheduleDiagnostics();
+            if (event.changes.length === 1 && event.changes[0].text === ">") {{
+                closeHtmlTag(event.changes[0]);
+            }}
+            const position = editor.getPosition();
             sendBridge({{
-                event: "cursor",
-                cursor: editor.session.doc.positionToIndex(pos, 0)
+                event: "change",
+                text: model.getValue(),
+                cursor: position ? model.getOffsetAt(position) : 0
             }});
-        }}, 25);
+        }});
+
+        editor.onDidChangeCursorPosition(function () {{
+            if (settingFromPython) return;
+            if (cursorTimer !== null) window.clearTimeout(cursorTimer);
+            cursorTimer = window.setTimeout(function () {{
+                cursorTimer = null;
+                const position = editor.getPosition();
+                sendBridge({{
+                    event: "cursor",
+                    cursor: position ? model.getOffsetAt(position) : 0
+                }});
+            }}, 25);
+        }});
+
+        window.codeEditorSetValue = function (value) {{
+            settingFromPython = true;
+            model.setValue(String(value));
+            editor.setPosition({{ lineNumber: 1, column: 1 }});
+            settingFromPython = false;
+            scheduleDiagnostics();
+        }};
+        window.codeEditorSetMode = function (mode) {{
+            options.mode = mode;
+            monaco.editor.setModelLanguage(model, modeName(mode));
+            scheduleDiagnostics();
+        }};
+        window.codeEditorSetTheme = function (theme) {{
+            options.theme = theme;
+            monaco.editor.setTheme(theme);
+        }};
+        window.codeEditorSelect = function (start, end) {{
+            const range = new monaco.Range(
+                model.getPositionAt(start).lineNumber,
+                model.getPositionAt(start).column,
+                model.getPositionAt(end).lineNumber,
+                model.getPositionAt(end).column
+            );
+            editor.setSelection(range);
+            editor.revealRangeInCenterIfOutsideViewport(range);
+            editor.focus();
+        }};
+        window.codeEditorDispose = function () {{
+            diagnosticsVersion += 1;
+            if (diagnosticsTimer !== null) window.clearTimeout(diagnosticsTimer);
+            monaco.editor.setModelMarkers(model, "javascript", []);
+            javascriptCompletionProvider.dispose();
+            javascriptModels.forEach(function (scriptModel) {{
+                scriptModel.dispose();
+            }});
+            editor.dispose();
+            model.dispose();
+        }};
+
+        sendBridge({{ event: "ready" }});
     }});
-
-    window.codeEditorSetValue = function (value) {{
-        settingFromPython = true;
-        editor.setValue(value, -1);
-        settingFromPython = false;
-    }};
-    window.codeEditorSetMode = function (mode) {{
-        options.mode = mode;
-        editor.session.setMode(modeName(mode));
-    }};
-    window.codeEditorSetTheme = function (theme) {{
-        options.theme = theme;
-        editor.setTheme(theme);
-    }};
-    window.codeEditorSelect = function (start, end) {{
-        const doc = editor.session.doc;
-        editor.selection.setRange(new Range(
-            doc.indexToPosition(start, 0).row,
-            doc.indexToPosition(start, 0).column,
-            doc.indexToPosition(end, 0).row,
-            doc.indexToPosition(end, 0).column
-        ));
-        editor.scrollToLine(doc.indexToPosition(start, 0).row, true, true);
-        editor.focus();
-    }};
-
-    editor.resize(true);
-    sendBridge({{ event: "ready" }});
 }})();
 </script>
 """
 
     @staticmethod
     def _theme_name() -> str:
-        return (
-            "ace/theme/github_dark"
-            if theme_manager.night_mode
-            else "ace/theme/github_light_default"
-        )
+        return "vs-dark" if theme_manager.night_mode else "vs"
 
     def _on_editor_bridge_command(self, command: str) -> None:
         try:
@@ -382,4 +535,6 @@ html, body, #editor {{
         if self._cleaned_up:
             return
         self._cleaned_up = True
+        if self._ready:
+            self.eval("window.codeEditorDispose();")
         super().cleanup()
