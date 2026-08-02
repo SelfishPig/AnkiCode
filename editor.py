@@ -97,7 +97,7 @@ class TemplateCodeEditor(AnkiWebView):
 
     def _on_load_finished(self) -> None:
         # AnkiWebView normally maps Escape to closing its parent dialog. Ace
-        # uses Escape to dismiss inline completion, so leave the key with Ace.
+        # uses Escape to dismiss live completion, so leave the key with Ace.
         pass
 
     @staticmethod
@@ -110,7 +110,7 @@ class TemplateCodeEditor(AnkiWebView):
         root = f"/_addons/{cls._addon_package()}/vendor"
         return [
             f"{root}/ace.js",
-            f"{root}/ext-inline_autocomplete.js",
+            f"{root}/ext-language_tools.js",
             f"{root}/mode-html.js",
             f"{root}/mode-css.js",
             f"{root}/mode-javascript.js",
@@ -163,11 +163,9 @@ html, body, #editor {{
 
     const editor = ace.edit("editor");
     const languageTools = ace.require("ace/ext/language_tools");
-    const autocompleteUtil = ace.require("ace/autocomplete/util");
     const Range = ace.require("ace/range").Range;
     let settingFromPython = false;
     let cursorTimer = null;
-    let inlineTimer = null;
 
     function sendBridge(message) {{
         if (typeof pycmd === "function") {{
@@ -262,13 +260,13 @@ html, body, #editor {{
     editor.setOptions({{
         behavioursEnabled: options.autoClosePairs,
         displayIndentGuides: true,
-        enableBasicAutocompletion: false,
-        enableInlineAutocompletion: options.autocomplete,
-        enableLiveAutocompletion: false,
+        enableBasicAutocompletion: options.autocomplete,
+        enableLiveAutocompletion: options.autocomplete,
         enableSnippets: false,
         fontSize: options.fontSize + "pt",
         highlightActiveLine: true,
         highlightSelectedWord: true,
+        liveAutocompletionThreshold: options.autocompleteMinChars,
         mode: modeName(options.mode),
         navigateWithinSoftTabs: true,
         showFoldWidgets: true,
@@ -279,33 +277,6 @@ html, body, #editor {{
         wrap: options.wrap
     }});
     editor.session.setUseWorker(false);
-
-    function startInlineCompletion(forced) {{
-        if (!options.autocomplete) return;
-        const prefix = autocompleteUtil.getCompletionPrefix(editor);
-        if (!forced && prefix.length < options.autocompleteMinChars) return;
-        if (editor.completer && editor.completer.activated) return;
-        editor.execCommand("startInlineAutocomplete");
-    }}
-
-    editor.commands.addCommand({{
-        name: "showTemplateInlineCompletion",
-        bindKey: {{ win: "Ctrl-Space", mac: "Ctrl-Space" }},
-        exec: function () {{ startInlineCompletion(true); }}
-    }});
-
-    editor.commands.on("afterExec", function (event) {{
-        if (!options.autocomplete || settingFromPython) return;
-        if (
-            event.command.name !== "insertstring"
-            && event.command.name !== "backspace"
-        ) return;
-        if (inlineTimer !== null) window.clearTimeout(inlineTimer);
-        inlineTimer = window.setTimeout(function () {{
-            inlineTimer = null;
-            startInlineCompletion(false);
-        }}, 0);
-    }});
 
     editor.session.on("change", function () {{
         if (settingFromPython) return;

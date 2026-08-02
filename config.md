@@ -1,6 +1,6 @@
 # Template Code Editor settings
 
-- `autocomplete`: show Ace inline (ghost-text) completions while typing.
+- `autocomplete`: show Ace live completion suggestions while typing.
 - `autocomplete_min_chars`: characters required before automatic suggestions appear. `Ctrl+Space` always opens suggestions.
 - `auto_close_pairs`: automatically close brackets and quotes.
 - `font_size`: editor font size in points (8–32).
