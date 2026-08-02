@@ -37,4 +37,4 @@ jobs:
         run: >-
           gh release upload "$RELEASE_TAG"
           "${{ steps.package.outputs.artifact }}"
-          --clob
+          --clobber
