@@ -12,7 +12,7 @@ from .editor import TemplateCodeEditor
 
 
 if mw is not None:
-    mw.addonManager.setWebExports(__name__, r"vendor/monaco/.*")
+    mw.addonManager.setWebExports(__name__, r"vendor/.*")
 
 
 def _install_editor(dialog: Any) -> None:
