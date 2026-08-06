@@ -1,7 +1,7 @@
 {
     "name": "Template Code Editor",
     "package": "code_editor",
-    "version": "2.3.2",
+    "version": "2.3.3",
     "author": "SelfishPig",
     "min_point_version": 50
 }
