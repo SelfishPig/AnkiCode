@@ -24,6 +24,7 @@ import * as monaco from "monaco-editor";
     }
 
     const editor = monaco.editor.create(document.getElementById("editor"), {
+        automaticLayout: true,
         theme: options.theme,
     });
     const model = editor.getModel();
