@@ -1,48 +1,102 @@
-name: Publish Anki add-on
+name: Publish release
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
-      tag:
-        description: Release tag to package
+      version:
+        description: Version to release, without the v prefix (for example 2.3.4)
         required: true
         type: string
 
 permissions:
   contents: write
 
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
+
 jobs:
-  publish:
+  build-and-publish:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check out the released version
+      - name: Check out main
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          ref: main
+          fetch-depth: 0
 
-      - name: Build add-on package
-        id: package
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install build dependencies
+        run: npm ci
+
+      - name: Set release version
+        id: release
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
-          REPOSITORY_NAME: ${{ github.event.repository.name }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          artifact="${REPOSITORY_NAME}-${RELEASE_TAG}.ankiaddon"
-          zip -9 -X -r "$artifact" \
-            __init__.py \
-            editor.py \
-            manifest.json \
-            vendor
-          echo "artifact=$artifact" >> "$GITHUB_OUTPUT"
+          version="${INPUT_VERSION#v}"
+          npm run version:set -- "$version"
+          release_tag="v$version"
+          if git rev-parse --verify --quiet "refs/tags/$release_tag"; then
+            tag_commit="$(git rev-list -n 1 "$release_tag")"
+            if [ "$tag_commit" != "$(git rev-parse HEAD)" ]; then
+              echo "Tag $release_tag already points to another commit" >&2
+              exit 1
+            fi
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "artifact=AnkiCode-$release_tag.ankiaddon" >> "$GITHUB_OUTPUT"
 
-      - name: Upload package to the release
+      - name: Build installable add-on
+        run: |
+          npm run build
+          test -f "${{ steps.release.outputs.artifact }}"
+
+      - name: Commit version and create tag
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          TAG_EXISTS: ${{ steps.release.outputs.tag_exists }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json package.json package-lock.json
+          if [ "$TAG_EXISTS" = "true" ]; then
+            if ! git diff --cached --quiet; then
+              echo "Existing tag $RELEASE_TAG does not contain this version" >&2
+              exit 1
+            fi
+          else
+            if ! git diff --cached --quiet; then
+              git commit -m "Release $RELEASE_TAG"
+            fi
+            git tag -a "$RELEASE_TAG" -m "$RELEASE_TAG"
+            git push --atomic origin HEAD:main "refs/tags/$RELEASE_TAG"
+          fi
+
+      - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
-        run: >-
-          gh release upload "$RELEASE_TAG"
-          "${{ steps.package.outputs.artifact }}"
-          --clobber
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" \
+              "${{ steps.release.outputs.artifact }}" \
+              --clobber
+          else
+            gh release create "$RELEASE_TAG" \
+              "${{ steps.release.outputs.artifact }}" \
+              --generate-notes \
+              --title "$RELEASE_TAG" \
+              --verify-tag
+          fi
