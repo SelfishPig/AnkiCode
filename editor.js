@@ -1,6 +1,12 @@
 import "monaco-editor/languages/definitions/register.all";
 import "monaco-editor/languages/features/register.all";
 import * as monaco from "monaco-editor";
+import { cssDefaults } from "monaco-editor/language/css/monaco.contribution";
+import { htmlDefaults } from "monaco-editor/language/html/monaco.contribution";
+import {
+    getJavaScriptWorker,
+    javascriptDefaults,
+} from "monaco-editor/language/typescript/monaco.contribution";
 import { format as prettierFormat } from "prettier/standalone";
 import prettierPluginBabel from "prettier/plugins/babel";
 import prettierPluginEstree from "prettier/plugins/estree";
@@ -48,9 +54,9 @@ import prettierPluginPostcss from "prettier/plugins/postcss";
         });
     }
 
-    disableBuiltInFormatting(monaco.languages.html.htmlDefaults);
-    disableBuiltInFormatting(monaco.languages.css.cssDefaults);
-    disableBuiltInFormatting(monaco.languages.typescript.javascriptDefaults);
+    disableBuiltInFormatting(htmlDefaults);
+    disableBuiltInFormatting(cssDefaults);
+    disableBuiltInFormatting(javascriptDefaults);
 
     function embeddedFormattingContext(sourceModel, range) {
         if (sourceModel.getLanguageId() !== "html") return null;
@@ -271,8 +277,7 @@ import prettierPluginPostcss from "prettier/plugins/postcss";
                 );
 
                 try {
-                    const getWorker =
-                        await monaco.languages.typescript.getJavaScriptWorker();
+                    const getWorker = await getJavaScriptWorker();
                     const worker = await getWorker(scriptModel.uri);
                     const info = await worker.getCompletionsAtPosition(
                         scriptModel.uri.toString(),
@@ -357,8 +362,7 @@ import prettierPluginPostcss from "prettier/plugins/postcss";
         }
 
         try {
-            const getWorker =
-                await monaco.languages.typescript.getJavaScriptWorker();
+            const getWorker = await getJavaScriptWorker();
             const markers = [];
             for (let index = 0; index < blocks.length; index += 1) {
                 const block = blocks[index];
