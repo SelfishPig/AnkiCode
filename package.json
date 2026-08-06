@@ -1,6 +1,6 @@
 {
   "name": "anki-template-code-editor",
-  "version": "2.3.3",
+  "version": "2.3.4",
   "description": "This add-on upgrades the text area in **Cards…** with the bundled Monaco editor for front templates, back templates, and card styling.",
   "private": true,
   "scripts": {
