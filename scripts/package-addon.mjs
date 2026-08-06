@@ -4,7 +4,13 @@ import { fileURLToPath } from "node:url";
 import { zipSync } from "fflate";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const runtimeFiles = ["__init__.py", "editor.py", "manifest.json"];
+const ankiWebBuild = process.argv.includes("--ankiweb");
+const runtimeFiles = [
+    "__init__.py",
+    "editor.py",
+    "README.html",
+];
+if (!ankiWebBuild) runtimeFiles.push("manifest.json");
 const generatedAssets = "vendor";
 
 async function readJson(path) {
@@ -51,7 +57,9 @@ for (const fileName of runtimeFiles) {
 }
 await addDirectory(archive, join(projectRoot, generatedAssets));
 
-const artifactName = `AnkiCode-v${manifest.version}.ankiaddon`;
+const artifactName = ankiWebBuild
+    ? `AnkiCode-v${manifest.version}-ankiweb.ankiaddon`
+    : `AnkiCode-v${manifest.version}.ankiaddon`;
 const artifactPath = join(projectRoot, artifactName);
 const data = zipSync(archive, {
     level: 9,

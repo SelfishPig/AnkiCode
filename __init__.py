@@ -28,7 +28,8 @@ def _install_editor(dialog: Any) -> None:
         mode_provider = lambda: (
             "css" if getattr(dialog, "current_editor_index", 0) == 2 else "html"
         )
-        editor = TemplateCodeEditor(parent, mode_provider)
+        document_provider = lambda: getattr(dialog, "current_editor_index", 0)
+        editor = TemplateCodeEditor(parent, mode_provider, document_provider)
         editor.setObjectName(old_editor.objectName())
         editor.setSizePolicy(old_editor.sizePolicy())
         editor.setMinimumSize(old_editor.minimumSize())

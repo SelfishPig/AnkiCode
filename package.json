@@ -5,8 +5,10 @@
   "private": true,
   "scripts": {
     "build": "npm run build:editor && npm run package:addon",
+    "build:ankiweb": "npm run build:editor && npm run package:ankiweb",
     "build:editor": "vite build",
     "package:addon": "node scripts/package-addon.mjs",
+    "package:ankiweb": "node scripts/package-addon.mjs --ankiweb",
     "version:set": "node scripts/set-version.mjs"
   },
   "repository": {

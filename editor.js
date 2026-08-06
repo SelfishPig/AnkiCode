@@ -1,11 +1,9 @@
 import "monaco-editor/languages/definitions/register.all";
 import "monaco-editor/languages/features/register.all";
 import * as monaco from "monaco-editor";
-import { cssDefaults } from "monaco-editor/language/css/monaco.contribution";
-import { htmlDefaults } from "monaco-editor/language/html/monaco.contribution";
+import { FormattingConflicts } from "monaco-editor/editor/contrib/format/browser/format";
 import {
     getJavaScriptWorker,
-    javascriptDefaults,
 } from "monaco-editor/language/typescript/monaco.contribution";
 import { format as prettierFormat } from "prettier/standalone";
 import prettierPluginBabel from "prettier/plugins/babel";
@@ -17,8 +15,53 @@ import prettierPluginPostcss from "prettier/plugins/postcss";
     "use strict";
 
     const options = window.codeEditorOptions;
+    const preferencesStorageKey = "ankiCode.editorPreferences.v1";
+    const documentViewStates = new Map();
+    let activeDocument = String(options.document);
     let settingFromPython = false;
     let cursorTimer = null;
+
+    function storedEditorPreferences() {
+        try {
+            const stored = JSON.parse(
+                window.localStorage.getItem(preferencesStorageKey),
+            );
+            if (!stored || typeof stored !== "object") return null;
+
+            const preferences = {};
+            for (const key of ["tabSize", "indentSize"]) {
+                if (
+                    Number.isInteger(stored[key]) &&
+                    stored[key] >= 1 &&
+                    stored[key] <= 16
+                ) {
+                    preferences[key] = stored[key];
+                }
+            }
+            if (typeof stored.insertSpaces === "boolean") {
+                preferences.insertSpaces = stored.insertSpaces;
+            }
+            return preferences;
+        } catch (_error) {
+            return null;
+        }
+    }
+
+    function storeEditorPreferences(sourceModel) {
+        const modelOptions = sourceModel.getOptions();
+        try {
+            window.localStorage.setItem(
+                preferencesStorageKey,
+                JSON.stringify({
+                    indentSize: modelOptions.indentSize,
+                    insertSpaces: modelOptions.insertSpaces,
+                    tabSize: modelOptions.tabSize,
+                }),
+            );
+        } catch (_error) {
+            // The editor remains usable if web storage is unavailable.
+        }
+    }
 
     function sendBridge(message) {
         if (typeof pycmd === "function") {
@@ -45,18 +88,7 @@ import prettierPluginPostcss from "prettier/plugins/postcss";
         html: "html",
         javascript: "babel",
     };
-
-    function disableBuiltInFormatting(defaults) {
-        defaults.setModeConfiguration({
-            ...defaults.modeConfiguration,
-            documentFormattingEdits: false,
-            documentRangeFormattingEdits: false,
-        });
-    }
-
-    disableBuiltInFormatting(htmlDefaults);
-    disableBuiltInFormatting(cssDefaults);
-    disableBuiltInFormatting(javascriptDefaults);
+    const prettierFormatter = Symbol("prettierFormatter");
 
     function embeddedFormattingContext(sourceModel, range) {
         if (sourceModel.getLanguageId() !== "html") return null;
@@ -142,6 +174,7 @@ import prettierPluginPostcss from "prettier/plugins/postcss";
                 monaco.languages.registerDocumentFormattingEditProvider(
                     languageId,
                     {
+                        [prettierFormatter]: true,
                         provideDocumentFormattingEdits(
                             sourceModel,
                             formattingOptions,
@@ -158,6 +191,7 @@ import prettierPluginPostcss from "prettier/plugins/postcss";
                 monaco.languages.registerDocumentRangeFormattingEditProvider(
                     languageId,
                     {
+                        [prettierFormatter]: true,
                         provideDocumentRangeFormattingEdits(
                             sourceModel,
                             range,
@@ -176,12 +210,53 @@ import prettierPluginPostcss from "prettier/plugins/postcss";
             ];
         },
     );
+    const formatterSelector = FormattingConflicts.setFormatterSelector(
+        function (providers) {
+            return (
+                providers.find(function (provider) {
+                    return provider[prettierFormatter];
+                }) || providers[0]
+            );
+        },
+    );
 
     const editor = monaco.editor.create(document.getElementById("editor"), {
         automaticLayout: true,
         theme: options.theme,
     });
     const model = editor.getModel();
+
+    function saveActiveDocumentViewState() {
+        const viewState = editor.saveViewState();
+        if (viewState) documentViewStates.set(activeDocument, viewState);
+    }
+
+    function restoreDocumentViewState(document) {
+        activeDocument = String(document);
+        const viewState = documentViewStates.get(activeDocument);
+        if (viewState) {
+            editor.restoreViewState(viewState);
+        } else {
+            editor.setPosition({ lineNumber: 1, column: 1 });
+            editor.setScrollPosition({ scrollLeft: 0, scrollTop: 0 });
+        }
+    }
+
+    function sendCursorPosition() {
+        const position = editor.getPosition();
+        sendBridge({
+            event: "cursor",
+            cursor: position ? model.getOffsetAt(position) : 0,
+        });
+    }
+
+    const savedPreferences = storedEditorPreferences();
+    if (savedPreferences) model.updateOptions(savedPreferences);
+    const modelOptionsListener = model.onDidChangeOptions(function (event) {
+        if (event.tabSize || event.indentSize || event.insertSpaces) {
+            storeEditorPreferences(model);
+        }
+    });
     monaco.editor.setModelLanguage(model, modeName(options.mode));
     const javascriptModels = [];
     let diagnosticsTimer = null;
@@ -507,16 +582,25 @@ import prettierPluginPostcss from "prettier/plugins/postcss";
         }, 25);
     });
 
-    window.codeEditorSetValue = function (value) {
+    window.codeEditorSetValue = function (value, mode, document) {
+        saveActiveDocumentViewState();
         settingFromPython = true;
         model.setValue(String(value));
-        editor.setPosition({ lineNumber: 1, column: 1 });
-        settingFromPython = false;
-        scheduleDiagnostics();
-    };
-    window.codeEditorSetMode = function (mode) {
         options.mode = mode;
         monaco.editor.setModelLanguage(model, modeName(mode));
+        restoreDocumentViewState(document);
+        settingFromPython = false;
+        scheduleDiagnostics();
+        sendCursorPosition();
+    };
+    window.codeEditorSetMode = function (mode, document) {
+        options.mode = mode;
+        monaco.editor.setModelLanguage(model, modeName(mode));
+        if (String(document) !== activeDocument) {
+            saveActiveDocumentViewState();
+            restoreDocumentViewState(document);
+            sendCursorPosition();
+        }
         scheduleDiagnostics();
     };
     window.codeEditorSetTheme = function (theme) {
@@ -543,6 +627,8 @@ import prettierPluginPostcss from "prettier/plugins/postcss";
         }
         monaco.editor.setModelMarkers(model, "javascript", []);
         javascriptCompletionProvider.dispose();
+        formatterSelector.dispose();
+        modelOptionsListener.dispose();
         formattingProviders.forEach(function (provider) {
             provider.dispose();
         });

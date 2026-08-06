@@ -39,9 +39,11 @@ class TemplateCodeEditor(AnkiWebView):
         self,
         parent: QWidget,
         mode_provider: Callable[[], str],
+        document_provider: Callable[[], int],
     ) -> None:
         super().__init__(parent, kind=AnkiWebViewKind.CARD_LAYOUT)
         self._mode_provider = mode_provider
+        self._document_provider = document_provider
         self._text = ""
         self._cursor_offset = 0
         self._ready = False
@@ -72,6 +74,7 @@ class TemplateCodeEditor(AnkiWebView):
 
     def _editor_body(self) -> str:
         options = {
+            "document": self._document_provider(),
             "mode": self._mode_provider(),
             "theme": self._theme_name(),
         }
@@ -128,7 +131,14 @@ html, body, #editor {{
 
     def _set_javascript_value(self) -> None:
         if self._ready:
-            self.eval(f"window.codeEditorSetValue({json.dumps(self._text)});")
+            arguments = ", ".join(
+                (
+                    json.dumps(self._text),
+                    json.dumps(self._mode_provider()),
+                    json.dumps(self._document_provider()),
+                )
+            )
+            self.eval(f"window.codeEditorSetValue({arguments});")
 
     def setPlainText(self, text: str) -> None:  # noqa: N802 - Qt API
         self._text = str(text)
@@ -141,8 +151,13 @@ html, body, #editor {{
 
     def refresh_mode(self) -> None:
         mode = self._mode_provider()
+        document = self._document_provider()
         if self._ready:
-            self.eval(f"window.codeEditorSetMode({json.dumps(mode)});")
+            self.eval(
+                "window.codeEditorSetMode("
+                f"{json.dumps(mode)}, {json.dumps(document)}"
+                ");"
+            )
 
     def find(self, text: str, *_args: Any) -> bool:
         if not text:

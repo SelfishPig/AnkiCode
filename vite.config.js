@@ -60,6 +60,9 @@ function injectCss() {
 }
 
 export default defineConfig({
+    // The add-on is served below /_addons/<package>/vendor/, so worker assets
+    // must resolve relative to editor.js instead of from the webview root.
+    base: "./",
     plugins: [includeDependencyNotices(), injectCss()],
     build: {
         cssCodeSplit: false,
