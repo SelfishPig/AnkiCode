@@ -1,3 +1,4 @@
 node_modules/
 vendor/
 *.ankiaddon
+.DS_Store
