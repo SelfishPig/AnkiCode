@@ -1,6 +1,11 @@
 import "monaco-editor/languages/definitions/register.all";
 import "monaco-editor/languages/features/register.all";
 import * as monaco from "monaco-editor";
+import { format as prettierFormat } from "prettier/standalone";
+import prettierPluginBabel from "prettier/plugins/babel";
+import prettierPluginEstree from "prettier/plugins/estree";
+import prettierPluginHtml from "prettier/plugins/html";
+import prettierPluginPostcss from "prettier/plugins/postcss";
 
 (function () {
     "use strict";
@@ -23,6 +28,149 @@ import * as monaco from "monaco-editor";
         return mode === "css" ? "css" : "html";
     }
 
+    const prettierPlugins = [
+        prettierPluginBabel,
+        prettierPluginEstree,
+        prettierPluginHtml,
+        prettierPluginPostcss,
+    ];
+    const prettierParsers = {
+        css: "css",
+        html: "html",
+        javascript: "babel",
+    };
+
+    function disableBuiltInFormatting(defaults) {
+        defaults.setModeConfiguration({
+            ...defaults.modeConfiguration,
+            documentFormattingEdits: false,
+            documentRangeFormattingEdits: false,
+        });
+    }
+
+    disableBuiltInFormatting(monaco.languages.html.htmlDefaults);
+    disableBuiltInFormatting(monaco.languages.css.cssDefaults);
+    disableBuiltInFormatting(monaco.languages.typescript.javascriptDefaults);
+
+    function embeddedFormattingContext(sourceModel, range) {
+        if (sourceModel.getLanguageId() !== "html") return null;
+
+        const rangeStart = sourceModel.getOffsetAt(range.getStartPosition());
+        const rangeEnd = sourceModel.getOffsetAt(range.getEndPosition());
+        for (const [tagName, parser] of [
+            ["script", "babel"],
+            ["style", "css"],
+        ]) {
+            for (const block of tagBlocks(sourceModel, tagName)) {
+                if (
+                    rangeStart >= block.contentStart &&
+                    rangeEnd <= block.contentEnd
+                ) {
+                    return { parser };
+                }
+            }
+        }
+        return null;
+    }
+
+    function restoreSelectionIndent(sourceModel, range, source, text) {
+        const lineBeforeSelection = sourceModel
+            .getLineContent(range.startLineNumber)
+            .slice(0, range.startColumn - 1);
+        let indent = "";
+        let prefixFirstLine = false;
+
+        if (lineBeforeSelection && /^\s*$/.test(lineBeforeSelection)) {
+            indent = lineBeforeSelection;
+        } else if (range.startColumn === 1) {
+            indent = source.match(/^[\t ]*/)?.[0] || "";
+            prefixFirstLine = Boolean(indent);
+        }
+        if (!indent) return text;
+
+        const indented = text.replace(/\n(?!$)/g, `\n${indent}`);
+        return prefixFirstLine ? indent + indented : indented;
+    }
+
+    async function formattingEdit(
+        sourceModel,
+        formattingOptions,
+        token,
+        range,
+    ) {
+        if (token.isCancellationRequested) return [];
+
+        let source = sourceModel.getValue();
+        let editRange = sourceModel.getFullModelRange();
+        const prettierOptions = {
+            parser: prettierParsers[sourceModel.getLanguageId()],
+            plugins: prettierPlugins,
+            tabWidth: formattingOptions.tabSize,
+            useTabs: !formattingOptions.insertSpaces,
+        };
+        if (range) {
+            const embedded = embeddedFormattingContext(sourceModel, range);
+            source = sourceModel.getValueInRange(range);
+            editRange = range;
+            if (embedded) prettierOptions.parser = embedded.parser;
+        }
+
+        try {
+            let text = await prettierFormat(source, prettierOptions);
+            if (range) {
+                text = restoreSelectionIndent(sourceModel, range, source, text);
+            }
+            if (token.isCancellationRequested || text === source) {
+                return [];
+            }
+            return [{ range: editRange, text }];
+        } catch (error) {
+            console.error("Unable to format template", error);
+            return [];
+        }
+    }
+
+    const formattingProviders = Object.keys(prettierParsers).flatMap(
+        function (languageId) {
+            return [
+                monaco.languages.registerDocumentFormattingEditProvider(
+                    languageId,
+                    {
+                        provideDocumentFormattingEdits(
+                            sourceModel,
+                            formattingOptions,
+                            token,
+                        ) {
+                            return formattingEdit(
+                                sourceModel,
+                                formattingOptions,
+                                token,
+                            );
+                        },
+                    },
+                ),
+                monaco.languages.registerDocumentRangeFormattingEditProvider(
+                    languageId,
+                    {
+                        provideDocumentRangeFormattingEdits(
+                            sourceModel,
+                            range,
+                            formattingOptions,
+                            token,
+                        ) {
+                            return formattingEdit(
+                                sourceModel,
+                                formattingOptions,
+                                token,
+                                range,
+                            );
+                        },
+                    },
+                ),
+            ];
+        },
+    );
+
     const editor = monaco.editor.create(document.getElementById("editor"), {
         automaticLayout: true,
         theme: options.theme,
@@ -33,18 +181,18 @@ import * as monaco from "monaco-editor";
     let diagnosticsTimer = null;
     let diagnosticsVersion = 0;
 
-    function scriptBlocks(sourceModel) {
+    function tagBlocks(sourceModel, tagName) {
         const text = sourceModel.getValue();
         const lowered = text.toLocaleLowerCase();
         const blocks = [];
         let searchFrom = 0;
         while (searchFrom < text.length) {
-            const openingTag = lowered.indexOf("<script", searchFrom);
+            const openingTag = lowered.indexOf(`<${tagName}`, searchFrom);
             if (openingTag < 0) break;
             const tagEnd = text.indexOf(">", openingTag);
             if (tagEnd < 0) break;
             const contentStart = tagEnd + 1;
-            const closingTag = lowered.indexOf("</script", contentStart);
+            const closingTag = lowered.indexOf(`</${tagName}`, contentStart);
             const contentEnd = closingTag < 0 ? text.length : closingTag;
             blocks.push({
                 content: text.slice(contentStart, contentEnd),
@@ -56,6 +204,10 @@ import * as monaco from "monaco-editor";
             searchFrom = closingEnd < 0 ? text.length : closingEnd + 1;
         }
         return blocks;
+    }
+
+    function scriptBlocks(sourceModel) {
+        return tagBlocks(sourceModel, "script");
     }
 
     function scriptContext(sourceModel, position) {
@@ -387,6 +539,9 @@ import * as monaco from "monaco-editor";
         }
         monaco.editor.setModelMarkers(model, "javascript", []);
         javascriptCompletionProvider.dispose();
+        formattingProviders.forEach(function (provider) {
+            provider.dispose();
+        });
         javascriptModels.forEach(function (scriptModel) {
             scriptModel.dispose();
         });

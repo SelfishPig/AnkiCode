@@ -8,6 +8,7 @@ Features:
 - Monaco syntax highlighting for HTML, embedded CSS/JavaScript, and standalone
   card CSS;
 - Monaco's default HTML, CSS, and JavaScript completion support;
+- document and selection formatting for HTML, embedded JavaScript, and CSS;
 - syntax diagnostics for standalone CSS and JavaScript inside `<script>` tags;
 - line numbers, code folding, current-line highlighting, automatic indentation,
   paired brackets/quotes, automatic HTML closing tags, and the rest of Monaco's

@@ -1,6 +1,6 @@
 {
   "name": "anki-template-code-editor",
-  "version": "2.3.2",
+  "version": "2.3.3",
   "description": "This add-on upgrades the text area in **Cards…** with the bundled Monaco editor for front templates, back templates, and card styling.",
   "private": true,
   "scripts": {
@@ -20,6 +20,7 @@
   "homepage": "https://github.com/SelfishPig/AnkiCode#readme",
   "devDependencies": {
     "monaco-editor": "^0.56.0",
+    "prettier": "^3.9.6",
     "vite": "^8.2.0"
   }
 }

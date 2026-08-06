@@ -2,19 +2,27 @@ import { defineConfig } from "vite";
 import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
 
-function includeMonacoNotices() {
+function includeDependencyNotices() {
     const monacoRoot = resolve(
         import.meta.dirname,
         "node_modules/monaco-editor",
     );
+    const prettierRoot = resolve(import.meta.dirname, "node_modules/prettier");
     return {
-        name: "include-monaco-notices",
+        name: "include-dependency-notices",
         buildStart() {
             for (const fileName of ["LICENSE", "ThirdPartyNotices.txt"]) {
                 this.emitFile({
                     type: "asset",
                     fileName,
                     source: readFileSync(resolve(monacoRoot, fileName)),
+                });
+            }
+            for (const fileName of ["LICENSE", "THIRD-PARTY-NOTICES.md"]) {
+                this.emitFile({
+                    type: "asset",
+                    fileName: `Prettier-${fileName}`,
+                    source: readFileSync(resolve(prettierRoot, fileName)),
                 });
             }
         },
@@ -52,7 +60,7 @@ function injectCss() {
 }
 
 export default defineConfig({
-    plugins: [includeMonacoNotices(), injectCss()],
+    plugins: [includeDependencyNotices(), injectCss()],
     build: {
         cssCodeSplit: false,
         emptyOutDir: true,
